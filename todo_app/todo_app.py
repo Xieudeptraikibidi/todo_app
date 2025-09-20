@@ -1,219 +1,257 @@
-# --- 1. KHAI BÁO CÁC THƯ VIỆN VÀ CÀI ĐẶT BAN ĐẦU ---
-
 import reflex as rx
 import pyodbc
 import os
 from dotenv import load_dotenv
-from rxconfig import config
 
-# Tải các biến môi trường từ file .env (chứa chuỗi kết nối)
 load_dotenv()
-# Lấy chuỗi kết nối từ biến môi trường đã được tải
 CONNECTION_STRING = os.getenv("DATABASE_URL")
 
 
-# --- 2. LỚP STATE: QUẢN LÝ TOÀN BỘ TRẠNG THÁI VÀ LOGIC ---
-
 class State(rx.State):
-    """Lớp State quản lý toàn bộ trạng thái và logic của ứng dụng."""
-    
-    # Biến lưu trữ danh sách công việc lấy từ database.
-    # Mỗi công việc là một dictionary, ví dụ: {"id": 1, "title": "Học Reflex", "is_completed": False}
+    """This is state"""
+
     tasks: list[dict] = []
-    
-    # Biến theo dõi ID của task đang được di chuột qua để hiển thị icon xóa.
-    hovered_task_id: int = -1
-    # Biến kiểm soát việc hiển thị modal (hộp thoại) thêm task mới.
+
     show_new_form: bool = False
-    # Biến lưu trữ nội dung của ô input trong modal thêm task.
     new_label: str = ""
-    
-    # --- CÁC HÀM TƯƠNG TÁC VỚI DATABASE ---
+    hovered_task_id: int = -1
+    is_loading: bool = False
+    editing_task: dict | None = None
 
     def fetch_tasks(self):
-        """Tải tất cả công việc từ SQL Server và cập nhật State."""
-        self.tasks = []  # Xóa danh sách cũ để làm mới
+        self.tasks = []
         try:
-            # Dùng `with` để đảm bảo kết nối được đóng lại an toàn sau khi dùng
+            self.is_loading = True
             with pyodbc.connect(CONNECTION_STRING) as conn:
                 cursor = conn.cursor()
-                # Thực thi câu lệnh SQL để lấy dữ liệu
-                cursor.execute("SELECT ID, Title, IsCompleted FROM Tasks ORDER BY CreatedAt DESC")
+                cursor.execute(
+                    "SELECT ID, Title, IsCompleted FROM Tasks ORDER BY CreatedAt DESC"
+                )
                 rows = cursor.fetchall()
-                # Duyệt qua từng dòng kết quả và thêm vào danh sách `tasks`
                 for row in rows:
                     self.tasks.append(
                         {
                             "id": row.ID,
                             "title": row.Title,
-                            "is_completed": row.IsCompleted,
+                            "is_completed": bool(row.IsCompleted),
                         }
                     )
         except Exception as e:
-            # In ra lỗi nếu có sự cố kết nối hoặc truy vấn
-            print(f"Lỗi khi tải tasks: {e}")
-    
-    def set_hovered_task(self, task_id: int | None):
-        """Cập nhật ID của task đang được hover."""
-        self.hovered_task_id = task_id
-        
-    def delete_task(self, task_id: int):
-        """Xóa một công việc khỏi DB dựa trên ID."""
+            print(f"Lỗi khi tải task {e}")
+        finally:
+            self.is_loading = False
+
+    def toggle_complete(self, task: dict):
         try:
             with pyodbc.connect(CONNECTION_STRING) as conn:
                 cursor = conn.cursor()
-                # Dùng `?` để tránh lỗi SQL Injection, an toàn hơn
-                cursor.execute("DELETE FROM Tasks WHERE ID = ?", task_id)
-                conn.commit()  # commit() để xác nhận và lưu thay đổi vào DB
-            self.fetch_tasks() # Tải lại danh sách để cập nhật giao diện
+                new_status = not task["is_completed"]
+                cursor.execute(
+                    "UPDATE Tasks SET IsCompleted = ? WHERE ID = ?",
+                    new_status,
+                    task["id"],
+                )
+                conn.commit()
+            self.fetch_tasks()
         except Exception as e:
-            print(f"Lỗi khi xóa task: {e}")
+            print(f"Lỗi khi tải task {e}")
+
+    def open_new_form(self):
+        self.editing_task = None
+        self.new_label = ""
+        self.show_new_form = True
+
+    def cancel_new_form(self):
+        self.show_new_form = False
+        self.new_label = ""
+        self.editing_task = None
+
+    def set_hovered_task(self, task_id: int):
+        self.hovered_task_id = task_id
+
+    def new_label_set(self, v: str):
+        self.new_label = v
 
     def add_task(self):
-        """Thêm một công việc mới vào DB."""
-        label = (self.new_label or "").strip() # Lấy và làm sạch dữ liệu từ input
-        if not label: # Nếu input rỗng thì không làm gì cả
+        label = (self.new_label or "").strip()
+        if not label:
             return
-        
+
         try:
             with pyodbc.connect(CONNECTION_STRING) as conn:
                 cursor = conn.cursor()
                 cursor.execute("INSERT INTO Tasks (Title) VALUES (?)", label)
                 conn.commit()
-            self.cancel_new_form() # Đóng form sau khi thêm thành công
-            self.fetch_tasks()     # Tải lại danh sách
+            self.cancel_new_form()
+            self.fetch_tasks()
         except Exception as e:
-            print(f"Lỗi khi thêm task: {e}")
-            
-    def toggle_complete(self, task: dict):
-        """Cập nhật trạng thái hoàn thành của một công việc."""
+            print(f"Lỗi khi tải task {e}")
+
+    def delete_task(self, task_id: int):
         try:
             with pyodbc.connect(CONNECTION_STRING) as conn:
                 cursor = conn.cursor()
-                # Lật ngược trạng thái hiện tại (True -> False, False -> True)
-                new_status = not task["is_completed"]
-                cursor.execute("UPDATE Tasks SET IsCompleted = ? WHERE ID = ?", new_status, task["id"])
+                cursor.execute("DELETE FROM Tasks WHERE ID = ?", task_id)
                 conn.commit()
-            self.fetch_tasks() # Tải lại danh sách
+            self.fetch_tasks()
         except Exception as e:
-            print(f"Lỗi khi cập nhật task: {e}")
+            print(f"Lỗi khi tải task {e}")
 
-    # --- CÁC HÀM QUẢN LÝ TRẠNG THÁI GIAO DIỆN ---
+    @rx.var
+    def remaining_task(self) -> int:
+        return sum(1 for task in self.tasks if not task["is_completed"])
 
-    def open_new_form(self):
-        """Mở modal thêm task."""
+    def start_editing(self, task: dict):
+        self.editing_task = task
+
+        self.new_label = task["title"]
+
         self.show_new_form = True
-    
-    def cancel_new_form(self):
-        """Đóng và reset modal thêm task."""
-        self.show_new_form = False
-        self.new_label = ""
-        
-    def new_label_set (self, v: str):
-        """Cập nhật giá trị cho ô input trong modal."""
-        self.new_label = v
+
+    def update_task(self):
+        if self.editing_task is None:
+            return
+
+        new_title = (self.new_label or "").strip()
+        if not new_title:
+            return
+
+        try:
+            with pyodbc.connect(CONNECTION_STRING) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE Tasks SET Title = ? WHERE ID = ?",
+                    new_title,
+                    self.editing_task["id"],
+                )
+                conn.commit()
+            self.fetch_tasks()
+        except Exception as e:
+            print(f"Lỗi khi tải task {e}")
+        finally:
+            self.cancel_new_form()
+
+    def save_task(self):
+        if self.editing_task:
+            self.update_task()
+        else:
+            self.add_task()
 
 
-# --- 3. CÁC COMPONENT GIAO DIỆN (UI) ---
-
-def new_task_modal() -> rx.Component:
-    """Component cho modal (hộp thoại) thêm task mới."""
-    # rx.fragment dùng để nhóm các component lại mà không tạo thêm thẻ HTML thừa
-    return rx.fragment(
-        # Lớp phủ màu đen mờ phía sau
-        rx.box(
-            position="fixed", inset="0", background="rgba(0,0,0,0.4)",
-            z_index="1000", on_click=State.cancel_new_form,
-        ),
-        # Hộp thoại nội dung chính
-        rx.box(
-            rx.form(
-                rx.vstack(
-                    rx.heading("Create a new task", size="5"),
-                    rx.input(
-                        placeholder="Nhập tên task…", value=State.new_label,
-                        on_change=State.new_label_set, auto_focus=True, width="100%",
-                    ),
-                    rx.hstack(
-                        rx.button("Cancel", variant="soft", on_click=State.cancel_new_form, cursor='pointer'),
-                        rx.button("Add", type="submit", cursor='pointer'),
-                        justify="end", gap="8px",
-                    ),
-                    gap="12px",
-                ),
-                on_submit=lambda _: State.add_task(), width="100%",
-            ),
-            # Các thuộc tính CSS để căn giữa và tạo kiểu cho modal
-            position="fixed", top="50%", left="50%", transform="translate(-50%, -50%)",
-            background="#AF7EEA", padding="16px", border_radius="12px",
-            box_shadow="0 10px 40px rgba(0,0,0,0.2)", width="90vw",
-            max_width="480px", z_index="1001",
-        ),
-    )
-    
 def task_row(task: dict) -> rx.Component:
-    """Component render một dòng công việc trong danh sách."""
     return rx.hstack(
         rx.checkbox(
-            is_checked=task["is_completed"],
+            cursor="pointer",
+            checked=task["is_completed"],
             on_change=lambda _: State.toggle_complete(task),
         ),
-        rx.text(task["title"]),
-        rx.spacer(), # Dùng để đẩy icon xóa về cuối dòng
-        # Hiển thị icon xóa một cách có điều kiện
-        rx.cond(
-            State.hovered_task_id == task["id"], # Chỉ hiện khi ID task này đang được hover
-            rx.icon(
-                'trash', cursor='pointer',
-                on_click=lambda: State.delete_task(task["id"]), # Sự kiện xóa
-            ),
-            rx.box(), # Nếu không hover thì không hiện gì
+        rx.text(
+            task["title"],
+            text_decoration=rx.cond(task["is_completed"], "line-through", "none"),
+            color=rx.cond(task["is_completed"], "gray", "black"),
         ),
-        width="100%", align="center", padding="0 12px",
-        # Gắn sự kiện hover cho cả dòng
+        rx.spacer(),
+        rx.cond(
+            State.hovered_task_id == task["id"],
+            rx.hstack(
+                rx.icon(
+                    "pencil",
+                    cursor="pointer",
+                    on_click=lambda: State.start_editing(task),
+                ),
+                rx.icon(
+                    "trash",
+                    cursor="pointer",
+                    on_click=lambda: State.delete_task(task["id"]),
+                ),
+            ),
+            rx.box(),
+        ),
+        width="100%",
         on_mouse_enter=lambda: State.set_hovered_task(task["id"]),
         on_mouse_leave=lambda: State.set_hovered_task(-1),
-        # key: Cung cấp một định danh duy nhất cho mỗi dòng, giúp Reflex cập nhật giao diện chính xác
         key=task["id"],
     )
 
 
-# --- 4. TRANG CHÍNH CỦA ỨNG DỤNG ---
+def add_new_task_form() -> rx.Component:
+    return rx.fragment(
+        rx.box(
+            position="fixed",
+            inset="0",
+            background="rgba(0, 0, 0, 4)",
+            z_index="1000",
+            on_click=State.cancel_new_form,
+        ),
+        rx.box(
+            rx.form(
+                rx.vstack(
+                    rx.heading(rx.cond(State.editing_task, "Edit task", "Add task")),
+                    rx.input(
+                        placeholder= rx.cond(State.editing_task, "Edit a task", "Add a task"),
+                        value=State.new_label,
+                        on_change=State.new_label_set,
+                        auto_focus=True,
+                    ),
+                    rx.hstack(
+                        rx.button(rx.cond(State.editing_task, "Update", "Add"), cursor="pointer", type="submit"),
+                        rx.button(
+                            "Cancel", on_click=State.cancel_new_form, cursor="pointer"
+                        ),
+                    ),
+                ),
+                on_submit=lambda _: State.save_task(),
+            ),
+            position="fixed",
+            top="50%",
+            left="50%",
+            transform="translate(-50%, -50%)",
+            padding="16px",
+            z_index="1001",
+            background_color="gray",
+            box_shadow="0 10px 40px black",
+        ),
+    )
+
 
 def index() -> rx.Component:
-    """Trang chính của ứng dụng, nơi lắp ráp tất cả các component lại."""
     return rx.center(
         rx.vstack(
-            # Tiêu đề chính
+            rx.box(rx.text(f"Remaining tasks: {State.remaining_task}")),
             rx.box(
-                rx.heading("Website todo", size="8"), padding="12px",
-                background_color="#AF7EEA", border_radius="8px",
-                width = '100%', text_align = 'center'
+                rx.heading("Website todo", size="6"),
+                background="#AF7EEA",
+                padding="8px 80px",
             ),
-            # Danh sách các công việc
-            rx.vstack(
-                rx.foreach(State.tasks, task_row), # Dùng rx.foreach để render từng task_row
-                width="100%", border="1px solid gray", border_radius="12px",
-                padding="12px 0", spacing="3",
+            rx.cond(
+                State.is_loading,
+                rx.center(rx.spinner(size="3")),
+                rx.vstack(
+                    rx.foreach(State.tasks, task_row),
+                    width="100%",
+                    background="white",
+                    color="#9FA2AC",
+                    padding="16px",
+                    gap="12px",
+                ),
             ),
-            # Nút "Add new task"
             rx.box(
-                rx.button("+ New task", background_color="#AF7EEA", padding="12px", on_click=State.open_new_form),
-                width="100%", text_align="center",
+                rx.button(
+                    "+ New task",
+                    on_click=State.open_new_form,
+                    background="#AF7EEA",
+                    cursor="pointer",
+                ),
+                width="100%",
+                text_align="center",
+                cursor="pointer",
             ),
-            # Hiển thị modal một cách có điều kiện
-            rx.cond(State.show_new_form, new_task_modal(), rx.fragment()),
-            spacing="5", width="400px",
+            rx.cond(State.show_new_form, add_new_task_form(), rx.fragment()),
         ),
         height="100vh",
-        # Khi trang được tải lần đầu, gọi hàm fetch_tasks để lấy dữ liệu từ DB
         on_mount=State.fetch_tasks,
     )
 
 
-# --- 5. KHỞI TẠO VÀ CHẠY ỨNG DỤNG ---
-
-# Tạo một đối tượng ứng dụng
 app = rx.App()
-# Thêm trang index vào ứng dụng
 app.add_page(index)
