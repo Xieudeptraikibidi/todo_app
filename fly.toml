@@ -1,26 +1,35 @@
-# fly.toml app configuration file generated for todo-app-broken-frost-2857 on 2025-09-21T01:24:48+07:00
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
+# fly.toml cấu hình cho ứng dụng Reflex
 
-app = 'todo-app-broken-frost-2857'
+# Tên app trên Fly.io, giữ nguyên tên đã được tạo tự động
+app = 'todo-app-broken-frost-2857' 
 primary_region = 'sin'
 
-[build]
-  builder = 'paketobuildpacks/builder:base'
-
-[env]
-  PORT = '8080'
-
 [http_service]
-  internal_port = 8080
+  # Đổi port thành 8000 cho đúng với Reflex
+  internal_port = 8000 
   force_https = true
-  auto_stop_machines = 'stop'
+  auto_stop_machines = true
   auto_start_machines = true
-  min_machines_running = 0
-  processes = ['app']
+  min_machines_running = 0 # Đặt là 1 nếu muốn app không bị "ngủ"
+  
+  # Thêm phần này để khai báo cổng bên ngoài
+  [[http_service.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[http_service.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+  
+  # Thêm phần này để kiểm tra sức khỏe, rất quan trọng cho WebSocket
+  [[http_service.checks]]
+    type = "tcp"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "5s"
 
 [[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
-  cpus = 1
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
