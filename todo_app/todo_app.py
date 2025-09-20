@@ -188,13 +188,19 @@ def add_new_task_form() -> rx.Component:
                 rx.vstack(
                     rx.heading(rx.cond(State.editing_task, "Edit task", "Add task")),
                     rx.input(
-                        placeholder= rx.cond(State.editing_task, "Edit a task", "Add a task"),
+                        placeholder=rx.cond(
+                            State.editing_task, "Edit a task", "Add a task"
+                        ),
                         value=State.new_label,
                         on_change=State.new_label_set,
                         auto_focus=True,
                     ),
                     rx.hstack(
-                        rx.button(rx.cond(State.editing_task, "Update", "Add"), cursor="pointer", type="submit"),
+                        rx.button(
+                            rx.cond(State.editing_task, "Update", "Add"),
+                            cursor="pointer",
+                            type="submit",
+                        ),
                         rx.button(
                             "Cancel", on_click=State.cancel_new_form, cursor="pointer"
                         ),
